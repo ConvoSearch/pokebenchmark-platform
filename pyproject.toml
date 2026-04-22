@@ -1,0 +1,36 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pokebenchmark-platform"
+version = "0.1.0"
+description = "Benchmark orchestrator for LLM Pokemon agents — runs, save state catalog, video recording, REST/WebSocket API"
+requires-python = ">=3.11"
+readme = "README.md"
+license = { text = "MIT" }
+authors = [{ name = "Shardul Aggarwal" }]
+dependencies = [
+    "pokebenchmark-emulator>=0.1.0",
+    "pokebenchmark-agent>=0.1.0",
+    "fastapi>=0.68.0",
+    "uvicorn[standard]>=0.15.0",
+    "websockets>=10.0",
+    "aiofiles>=0.8.0",
+    "aiosqlite>=0.17.0",
+    "docker>=7.0.0",
+    "Pillow>=10.0.0",
+    "numpy>=1.24.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0.0", "pytest-asyncio>=0.23.0"]
+
+[project.scripts]
+pokebenchmark-orchestrator = "pokebenchmark_platform.orchestrator.__main__:main"
+
+[tool.setuptools.packages.find]
+include = ["pokebenchmark_platform*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

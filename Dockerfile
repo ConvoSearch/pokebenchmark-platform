@@ -1,0 +1,83 @@
+FROM python:3.12-slim AS mgba-builder
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    git cmake build-essential \
+    libpng-dev libzip-dev libsqlite3-dev \
+    python3-dev libffi-dev \
+    && rm -rf /var/lib/apt/lists/* \
+    && pip install cffi setuptools
+
+# Build mGBA 0.10.2
+RUN git clone --depth 1 --branch 0.10.2 https://github.com/mgba-emu/mgba.git /tmp/mgba-src && \
+    cd /tmp/mgba-src && mkdir build && cd build && \
+    cmake .. \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DBUILD_SHARED=ON \
+        -DBUILD_STATIC=OFF \
+        -DBUILD_GL=OFF \
+        -DBUILD_QT=OFF \
+        -DBUILD_SDL=OFF \
+        -DBUILD_LIBRETRO=OFF \
+        -DBUILD_GDB_STUB=OFF \
+        -DUSE_FFMPEG=OFF \
+        -DUSE_MAGICK=OFF \
+        -DUSE_EPOXY=OFF \
+        -DUSE_PNG=ON \
+        -DENABLE_VFS=ON \
+        -DBUILD_PYTHON=OFF \
+        -DCMAKE_POLICY_VERSION_MINIMUM=3.5 && \
+    make -j$(nproc)
+
+# Build Python bindings via libmgba-py
+RUN git clone https://github.com/hanzi/libmgba-py.git /tmp/libmgba-py && \
+    mkdir -p /home/mgba && ln -s /tmp/mgba-src /home/mgba/src && \
+    cd /tmp/libmgba-py && \
+    CFLAGS="-Wno-error=incompatible-pointer-types" \
+    BUILD_DIR=build \
+    LD_LIBRARY_PATH=/tmp/mgba-src/build \
+    python3 setup.py build --build-lib /tmp/mgba-pyout
+
+# Build stub for missing e-Reader symbols (not needed for gameplay)
+RUN printf '%s\n' \
+    '#include <stddef.h>' \
+    '#include <stdbool.h>' \
+    'void* EReaderScanLoadImagePNG(const char* f) { return NULL; }' \
+    'void* EReaderScanLoadImage(const void* p, unsigned w, unsigned h, unsigned s) { return NULL; }' \
+    'void* EReaderScanLoadImageA(const void* p, unsigned w, unsigned h, unsigned s) { return NULL; }' \
+    'void* EReaderScanLoadImage8(const void* p, unsigned w, unsigned h, unsigned s) { return NULL; }' \
+    'void EReaderScanDestroy(void* s) {}' \
+    'bool EReaderScanCard(void* s) { return false; }' \
+    'void EReaderScanOutputBitmap(const void* s, void* o, size_t stride) {}' \
+    'bool EReaderScanSaveRaw(const void* s, const char* f, bool strict) { return false; }' \
+    > /tmp/stub.c && \
+    gcc -shared -o /tmp/libmgba_stub.so /tmp/stub.c
+
+# ---
+
+FROM python:3.12-slim
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ffmpeg \
+    libpng16-16t64 \
+    libzip-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy mGBA shared library + stub
+COPY --from=mgba-builder /tmp/mgba-src/build/libmgba.so* /usr/local/lib/
+COPY --from=mgba-builder /tmp/libmgba_stub.so /usr/local/lib/
+RUN ldconfig
+
+# Copy mGBA Python bindings (from libmgba-py)
+COPY --from=mgba-builder /tmp/mgba-pyout/mgba /usr/local/lib/python3.12/site-packages/mgba
+
+# Install Python dependencies
+COPY requirements.txt /tmp/requirements.txt
+RUN pip install --no-cache-dir cffi && pip install --no-cache-dir -r /tmp/requirements.txt
+
+WORKDIR /app
+COPY . /app
+
+ENV PYTHONUNBUFFERED=1
+ENV LD_PRELOAD=/usr/local/lib/libmgba_stub.so
+
+CMD ["python", "-m", "pokebenchmark_platform.orchestrator"]
